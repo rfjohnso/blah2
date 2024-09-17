@@ -28,7 +28,7 @@ Tracker::~Tracker()
 {
 }
 
-Track *Tracker::process(Detection *detection, uint64_t currentTime)
+std::unique_ptr<Track> Tracker::process(Detection *detection, uint64_t currentTime)
 {
   doNotInitiate.clear();
   for (size_t i = 0; i < detection->get_nDetections(); i++)
@@ -46,7 +46,7 @@ Track *Tracker::process(Detection *detection, uint64_t currentTime)
   }
   initiate(detection);
 
-  return &track;
+  return std::make_unique<Track>(track);
 }
 
 void Tracker::update(Detection *detection, uint64_t current)
@@ -56,7 +56,9 @@ void Tracker::update(Detection *detection, uint64_t current)
   std::vector<double> snr = detection->get_snr();
 
   // init
-  double delayPredict, dopplerPredict, acc;
+  double delayPredict = 0.0;
+  double dopplerPredict = 0.0;
+  double acc = 0.0;
   uint32_t nRemove = 0;
   std::string state;
 
@@ -65,7 +67,7 @@ void Tracker::update(Detection *detection, uint64_t current)
   timestamp = current;
 
   // loop over each track
-  for (int i = 0; i < track.get_n(); i++)
+  for (uint64_t i = 0; i < track.get_n(); i++)
   {
     // predict next position
     Detection detectionCurrent = track.get_current(i);

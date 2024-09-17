@@ -14,13 +14,9 @@
 
 // class static constants
 const double RspDuo::MAX_FREQUENCY_NR = 2000000000;
-const int RspDuo::DEF_AGC_BANDWIDTH_NR = 50;         // default agc bandwidth
 const int RspDuo::MIN_AGC_SET_POINT_NR = -72;        // min agc set point
-const int RspDuo::DEF_AGC_SET_POINT_NR = -60;        // default agc set point
 const int RspDuo::MIN_GAIN_REDUCTION_NR = 20;        // min gain reduction
-const int RspDuo::DEF_GAIN_REDUCTION_NR = 40;        // default gain reduction
-const int RspDuo::MAX_GAIN_REDUCTION_NR = 60;        // max gain reduction
-const int RspDuo::DEF_LNA_STATE_NR = 4;              // default lna state
+const int RspDuo::MAX_GAIN_REDUCTION_NR = 59;        // max gain reduction
 const int RspDuo::MAX_LNA_STATE_NR = 9;              // max lna state
 const int RspDuo::DEF_SAMPLE_RATE_NR = 2000000;      // default sample rate
 
@@ -47,7 +43,10 @@ IqData *buffer2;
 
 // constructor
 RspDuo::RspDuo(std::string _type, uint32_t _fc, 
-  uint32_t _fs, std::string _path, bool *_saveIq)
+  uint32_t _fs, std::string _path, bool *_saveIq,
+  int _agcSetPoint, int _bandwidthNumber, 
+  int _gainReduction, int _lnaState,
+  bool _dabNotch, bool _rfNotch)
   : Source(_type, _fc, _fs, _path, _saveIq)
 {
   std::unordered_map<int, int> decimationMap = {
@@ -58,16 +57,34 @@ RspDuo::RspDuo(std::string _type, uint32_t _fc,
     {125000, 16},
     {62500, 32}
   };
+  std::unordered_map<int, sdrplay_api_Bw_MHzT> ifBandwidthMap = {
+    {2000000, sdrplay_api_BW_1_536},
+    {1000000, sdrplay_api_BW_0_600},
+    {500000, sdrplay_api_BW_0_600},
+    {250000, sdrplay_api_BW_0_300},
+    {125000, sdrplay_api_BW_0_200},
+    {62500, sdrplay_api_BW_0_200}
+  };
+  std::unordered_map<int, sdrplay_api_If_kHzT> ifModeMap = {
+    {2000000, sdrplay_api_IF_1_620},
+    {1000000, sdrplay_api_IF_1_620},
+    {500000, sdrplay_api_IF_1_620},
+    {250000, sdrplay_api_IF_1_620},
+    {125000, sdrplay_api_IF_1_620},
+    {62500, sdrplay_api_IF_1_620}
+  };
   nDecimation = decimationMap[fs];
+  bwType = ifBandwidthMap[fs];
+  ifType = ifModeMap[fs];
   usb_bulk_fg = false;
-  agc_bandwidth_nr = DEF_AGC_BANDWIDTH_NR;
-  agc_set_point_nr = DEF_AGC_SET_POINT_NR;
-  gain_reduction_nr = DEF_GAIN_REDUCTION_NR;
-  lna_state_nr = DEF_LNA_STATE_NR;
-  rf_notch_fg = false;
-  dab_notch_fg = false;
   capture_fg = saveIq;
   saveIqFileLocal = &saveIqFile;
+  agc_bandwidth_nr = _bandwidthNumber;
+  agc_set_point_nr = _agcSetPoint;
+  gain_reduction_nr = _gainReduction;
+  lna_state_nr = _lnaState;
+  rf_notch_fg = _rfNotch;
+  dab_notch_fg = _dabNotch;
 }
 
 void RspDuo::start()
@@ -116,9 +133,13 @@ void RspDuo::replay(IqData *_buffer1, IqData *_buffer2, std::string _file, bool 
   while (true)
   {
     rv = fread(&i1, 1, sizeof(short), file_replay);
+    if (rv != sizeof(short)) break; 
     rv = fread(&q1, 1, sizeof(short), file_replay);
+    if (rv != sizeof(short)) break; 
     rv = fread(&i2, 1, sizeof(short), file_replay);
+    if (rv != sizeof(short)) break; 
     rv = fread(&q2, 1, sizeof(short), file_replay);
+    if (rv != sizeof(short)) break; 
     buffer1->lock();
     buffer2->lock();
     if (buffer1->get_length() < buffer1->get_n())
@@ -215,7 +236,7 @@ void RspDuo::open_api()
 
 void RspDuo::get_device()
 {
-  int i;
+  unsigned int i;
   unsigned int ndev;
   unsigned int chosenIdx = 0;
 
@@ -378,25 +399,8 @@ void RspDuo::set_device_parameters()
   // set decimation and IF frequency and analog bandwidth
   chParams->ctrlParams.decimation.enable = 1;
   chParams->ctrlParams.decimation.decimationFactor = nDecimation;
-  chParams->tunerParams.ifType = sdrplay_api_IF_1_620;
-  chParams->tunerParams.bwType = sdrplay_api_BW_1_536;
-
-  if (nDecimation == 4)
-  {
-    // 2 MSa/s / 4 = 500 kHz
-    chParams->tunerParams.bwType = sdrplay_api_BW_0_600;
-  }
-  else if (nDecimation == 8)
-  {
-    // 2 MSa/s / 8 = 250 kHz
-    chParams->tunerParams.bwType = sdrplay_api_BW_0_300;
-  }
-  else if (nDecimation == 16 || nDecimation == 32)
-  {
-    // 2 MSa/s / 16 = 125 kHz
-    // 2 MSa/s / 32 = 62.5 kHz
-    chParams->tunerParams.bwType = sdrplay_api_BW_0_200;
-  }
+  chParams->tunerParams.ifType = ifType;
+  chParams->tunerParams.bwType = bwType;
 
   // configure notch filters
   chParams->rspDuoTunerParams.rfNotchEnable = rf_notch_fg;
@@ -414,8 +418,8 @@ void RspDuo::stream_a_callback(short *xi, short *xq,
 sdrplay_api_StreamCbParamsT *params, unsigned int numSamples, 
 unsigned int reset, void *cbContext)
 {
-  int i = 0;
-  int j = 0;
+  unsigned int i = 0;
+  unsigned int j = 0;
 
   // process stream callback data
   buffer_16_ar = (short int *)malloc(numSamples * 4 * sizeof(short));
@@ -457,8 +461,8 @@ void RspDuo::stream_b_callback(short *xi, short *xq,
 sdrplay_api_StreamCbParamsT *params, unsigned int numSamples, 
 unsigned int reset, void *cbContext)
 {
-  int i = 0;
-  int j = 0;
+  unsigned int i = 0;
+  unsigned int j = 0;
 
   // xxxxIIQQ
   for (i = 0; i < numSamples; i++)
@@ -474,7 +478,7 @@ unsigned int reset, void *cbContext)
   // write data to IqData
   buffer1->lock();
   buffer2->lock();
-  for (int i = 0; i < numSamples*4; i+=4)
+  for (i = 0; i < numSamples*4; i+=4)
   {
     buffer1->push_back({(double)buffer_16_ar[i], (double)buffer_16_ar[i+1]});
     buffer2->push_back({(double)buffer_16_ar[i+2], (double)buffer_16_ar[i+3]});

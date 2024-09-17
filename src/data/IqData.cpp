@@ -54,11 +54,13 @@ void IqData::push_back(std::complex<double> sample)
 
 std::complex<double> IqData::pop_front()
 {
+  if (data->empty()) {
+    throw std::runtime_error("Attempting to pop from an empty deque");
+  }
   std::complex<double> sample = data->front();
   data->pop_front();
   return sample;
 }
-
 void IqData::print()
 {
   int n = data->size();
@@ -96,14 +98,14 @@ std::string IqData::to_json(uint64_t timestamp)
 
   // store frequency array
   rapidjson::Value arrayFrequency(rapidjson::kArrayType);
-  for (int i = 0; i < frequency.size(); i++)
+  for (size_t i = 0; i < frequency.size(); i++)
   {
     arrayFrequency.PushBack(frequency[i], allocator);
   }
 
   // store spectrum array
   rapidjson::Value arraySpectrum(rapidjson::kArrayType);
-  for (int i = 0; i < spectrum.size(); i++)
+  for (size_t i = 0; i < spectrum.size(); i++)
   {
     arraySpectrum.PushBack(10 * std::log10(std::abs(spectrum[i])), allocator);
   }
